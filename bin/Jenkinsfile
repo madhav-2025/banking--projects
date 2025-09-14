@@ -5,86 +5,63 @@ pipeline {
         maven "maven_3.6.3"
     }
 
-    environment {	
-        DOCKERHUB_CREDENTIALS = credentials('dockerloginid')
-    } 
-    
+    environment {
+        DOCKER_IMAGE = "jhamadhav2025/banking-app"
+    }
+
     stages {
         stage('SCM Checkout') {
             steps {
                 git 'https://github.com/madhav-2025/banking--projects.git'
             }
         }
-        
+
         stage('Maven Build') {
             steps {
                 sh "mvn -Dmaven.test.failure.ignore=true clean package"
             }
         }
-        
-        stage("Docker Build") {
+
+        stage('Docker Build & Push') {
             steps {
-                sh 'docker version'
-                sh "docker build -t jhamadhav2025/banking-app:${BUILD_NUMBER} ."
-                sh 'docker image list'
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                        docker build -t $DOCKER_IMAGE:${BUILD_NUMBER} .
+                        docker tag $DOCKER_IMAGE:${BUILD_NUMBER} $DOCKER_IMAGE:latest
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push $DOCKER_IMAGE:${BUILD_NUMBER}
+                        docker push $DOCKER_IMAGE:latest
+                    """
+                }
             }
         }
-        
-        stage('Login to DockerHub') {
+
+        stage('Deploy to Kubernetes') {
             steps {
-                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
-            }
-        }
-        
-        stage('Push to DockerHub') {
-            steps {
-                sh "docker push jhamadhav2025/banking-app:${BUILD_NUMBER}"
-                sh "docker push jhamadhav2025/banking-app:latest"
-            }
-        }
-        
-        stage('Deploy to Kubernetes Dev Environment') {
-            steps {
-                script {
-                    sshPublisher(publishers: [sshPublisherDesc(
-                        configName: 'Kubernetes', 
-                        transfers: [sshTransfer(
-                            cleanRemote: false, 
-                            excludes: '', 
-                            execCommand: 'kubectl apply -f kubernetesdeploy.yaml', 
-                            execTimeout: 120000, 
-                            flatten: false, 
-                            makeEmptyDirs: false, 
-                            noDefaultExcludes: false, 
-                            patternSeparator: '[, ]+', 
-                            remoteDirectory: '.', 
-                            remoteDirectorySDF: false, 
-                            removePrefix: '', 
-                            sourceFiles: '*.yaml'
-                        )], 
-                        usePromotionTimestamp: false, 
-                        useWorkspaceInPromotion: false, 
-                        verbose: false
-                    )])
+                withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+                    sh """
+                        kubectl --kubeconfig=$KUBECONFIG apply -f k8s/
+                        kubectl --kubeconfig=$KUBECONFIG get pods -n banking
+                    """
                 }
             }
         }
     }
-    
-    //  EMAIL NOTIFICATIONS ADDED HERE
+
     post {
         always {
             emailext (
                 subject: "Jenkins Build: ${currentBuild.fullDisplayName}",
                 body: """
-                Project: ${env.JOB_NAME}
-                Build Number: ${env.BUILD_NUMBER}
-                Build Status: ${currentBuild.currentResult}
-                Build URL: ${env.BUILD_URL}
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Build Status: ${currentBuild.currentResult}
+Build URL: ${env.BUILD_URL}
                 """,
-                to: "jhamadhav2025@gmail.com", //  Your email added
+                to: "jhamadhav2025@gmail.com",
                 attachLog: true
             )
         }
     }
 }
+
