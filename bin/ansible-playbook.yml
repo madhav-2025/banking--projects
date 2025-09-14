@@ -13,6 +13,6 @@
 - name: Deploy finance container
   docker_container:
     name: finance-app
-    image: shubhamkushwah123/finance-me:1.0
+    image: madhav2025/bankapp:latest
     published_ports:
       - "8084:8081"
